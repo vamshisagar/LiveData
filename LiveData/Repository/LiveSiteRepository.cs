@@ -5,10 +5,22 @@ namespace LiveData.Repository
 {
     public class LiveSiteRepository : ILiveSiteRepository
     {
-        public LiveSiteRepository() { }
+        private readonly CosmosClient _cosmosClient;
+        private readonly string _databaseId = "MyDatabase";
 
-        public async Task<CountOfIncidents> GetAllIncidentsRecordsAsync(Container container)
+        public LiveSiteRepository(CosmosClient cosmosClient)
         {
+            _cosmosClient = cosmosClient;
+        }
+
+        private Container GetContainer(string containerId)
+        {
+            return _cosmosClient.GetContainer(_databaseId, containerId);
+        }
+
+        public async Task<CountOfIncidents> GetIncidentCountsAsync()
+        {
+            var container = GetContainer("Incidents");
             var records = new List<IncidentsRecords>();
             var iterator = container.GetItemQueryIterator<IncidentsRecords>("SELECT * FROM c");
 
@@ -25,7 +37,7 @@ namespace LiveData.Repository
 
             // Count outage incidents
             var outageCount = records.Count(r => r.outage);
-            
+
             return new CountOfIncidents
             {
                 SeverityCounts = severityCounts,
@@ -33,8 +45,9 @@ namespace LiveData.Repository
             };
         }
 
-        public async Task<List<LiveSiteRecord>> GetAllRecordsAsync(Container container)
+        public async Task<List<LiveSiteRecord>> GetRecordsAsync(string containerId)
         {
+            var container = GetContainer(containerId);
             var records = new List<LiveSiteRecord>();
             var iterator = container.GetItemQueryIterator<LiveSiteRecord>("SELECT * FROM c");
 

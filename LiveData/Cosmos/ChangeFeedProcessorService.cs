@@ -3,84 +3,89 @@ using LiveData.Models;
 using LiveData.Repository;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Azure.Cosmos;
-using Microsoft.Azure.Cosmos.Serialization.HybridRow.RecordIO;
-using static DataController;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace LiveData.Cosmos
 {
     public class ChangeFeedProcessorService
     {
-        private readonly CosmosClient _cosmosClient;
+        private readonly ILiveSiteRepository _liveSiteRepository;
         private readonly IHubContext<DataHub> _hubContext;
-        private readonly ILiveSiteRepository liveSiteRepository;
+        private readonly CosmosClient _cosmosClient;
         private readonly string _databaseId = "MyDatabase";
-        private readonly string _table1ContainerId = "Table1Container";
-        private readonly string _table2ContainerId = "Table2Container";
-        private readonly string _incidentsContainerId = "Incidents";
-        private Container _table1Container;
-        private Container _table2Container;
-        private Container _incidentsContainer;
+        private readonly string _leaseContainerId = "leases";
+
+        private ChangeFeedProcessor _table1Processor;
+        private ChangeFeedProcessor _table2Processor;
+        private ChangeFeedProcessor _incidentsProcessor;
 
         public ChangeFeedProcessorService(CosmosClient cosmosClient, IHubContext<DataHub> hubContext, ILiveSiteRepository liveSiteRepository)
         {
             _cosmosClient = cosmosClient;
             _hubContext = hubContext;
-            this.liveSiteRepository = liveSiteRepository;
-            _table1Container = _cosmosClient.GetContainer(_databaseId, _table1ContainerId);
-            _table2Container = _cosmosClient.GetContainer(_databaseId, _table2ContainerId);
-            _incidentsContainer = _cosmosClient.GetContainer(_databaseId, _incidentsContainerId);
+            _liveSiteRepository = liveSiteRepository;
         }
 
         public async Task StartChangeFeedProcessorAsync()
         {
-            Container leaseContainer = _cosmosClient.GetContainer(_databaseId, "leases");
+            Container leaseContainer = _cosmosClient.GetContainer(_databaseId, _leaseContainerId);
 
-            // Table 1 change feed processor
-            ChangeFeedProcessor table1Processor = _table1Container
-                .GetChangeFeedProcessorBuilder<dynamic>("table1Processor", ProcessTable1ChangesAsync)
-                .WithInstanceName("table1Processor")
-                .WithLeaseContainer(leaseContainer)
-                .Build();
+            // Initialize change feed processors
+            _table1Processor = _cosmosClient.GetContainer(_databaseId, "Table1Container")
+                                            .GetChangeFeedProcessorBuilder<dynamic>("table1Processor", (changes, token) => ProcessTable1ChangesAsync(changes, token))
+                                            .WithInstanceName("table1Processor")
+                                            .WithLeaseContainer(leaseContainer)
+                                            .Build();
 
-            // Table 2 change feed processor
-            ChangeFeedProcessor table2Processor = _table2Container
-                .GetChangeFeedProcessorBuilder<dynamic>("table2Processor", ProcessTable2ChangesAsync)
-                .WithInstanceName("table2Processor")
-                .WithLeaseContainer(leaseContainer)
-                .Build();
+            _table2Processor = _cosmosClient.GetContainer(_databaseId, "Table2Container")
+                                            .GetChangeFeedProcessorBuilder<dynamic>("table2Processor", (changes, token) => ProcessTable2ChangesAsync(changes, token))
+                                            .WithInstanceName("table2Processor")
+                                            .WithLeaseContainer(leaseContainer)
+                                            .Build();
 
-            // Change feed processor for incidents
-            ChangeFeedProcessor incidentsProcessor = _incidentsContainer
-                .GetChangeFeedProcessorBuilder<dynamic>("incidentsProcessor", ProcessIncidentChangesAsync)
-                .WithInstanceName("incidentsProcessor")
-                .WithLeaseContainer(leaseContainer)
-                .Build();
+            _incidentsProcessor = _cosmosClient.GetContainer(_databaseId, "Incidents")
+                                               .GetChangeFeedProcessorBuilder<dynamic>("incidentsProcessor", (changes, token) => ProcessIncidentChangesAsync(changes, token))
+                                               .WithInstanceName("incidentsProcessor")
+                                               .WithLeaseContainer(leaseContainer)
+                                               .Build();
 
-            await table1Processor.StartAsync();
-            await table2Processor.StartAsync();
-            await incidentsProcessor.StartAsync();
-
+            // Start all processors
+            await _table1Processor.StartAsync();
+            await _table2Processor.StartAsync();
+            await _incidentsProcessor.StartAsync();
         }
+
+
+        public async Task StopChangeFeedProcessorAsync()
+        {
+            // Stop all processors gracefully
+            if (_table1Processor != null) await _table1Processor.StopAsync();
+            if (_table2Processor != null) await _table2Processor.StopAsync();
+            if (_incidentsProcessor != null) await _incidentsProcessor.StopAsync();
+        }
+
 
         private async Task ProcessTable1ChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
         {
-            var allTable1Records = await liveSiteRepository.GetAllRecordsAsync(_table1Container);
-            await _hubContext.Clients.All.SendAsync("ReceiveTable1Update", allTable1Records);
+            // Fetch all records from Table1Container and send them via SignalR
+            var table1Records = await _liveSiteRepository.GetRecordsAsync("Table1Container");
+            await _hubContext.Clients.All.SendAsync("ReceiveTable1Update", table1Records, cancellationToken);
         }
 
         private async Task ProcessTable2ChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
         {
-            var allTable2Records = await liveSiteRepository.GetAllRecordsAsync(_table2Container);
-            await _hubContext.Clients.All.SendAsync("ReceiveTable2Update", allTable2Records);
+            // Fetch all records from Table2Container and send them via SignalR
+            var table2Records = await _liveSiteRepository.GetRecordsAsync("Table2Container");
+            await _hubContext.Clients.All.SendAsync("ReceiveTable2Update", table2Records, cancellationToken);
         }
 
         private async Task ProcessIncidentChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
         {
-            // Fetch all records from the incidents container when any change is detected
-            var allIncidents = await liveSiteRepository.GetAllIncidentsRecordsAsync(_incidentsContainer);
-
-            // Send the updated incidents to all connected clients
-            await _hubContext.Clients.All.SendAsync("ReceiveIncidentUpdate", allIncidents);
+            // Fetch incident counts and send them via SignalR
+            var incidentCounts = await _liveSiteRepository.GetIncidentCountsAsync();
+            await _hubContext.Clients.All.SendAsync("ReceiveIncidentUpdate", incidentCounts, cancellationToken);
         }
     }
 }

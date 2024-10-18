@@ -16,6 +16,8 @@ public class DataController : ControllerBase
     private readonly string _databaseId = "MyDatabase";
     private readonly string _table1ContainerId = "Table1Container";
     private readonly string _table2ContainerId = "Table2Container";
+    private readonly string _incidentsContainerId = "Incidents";
+
 
     public DataController(CosmosClient cosmosClient, ILiveSiteRepository liveSiteRepository)
     {
@@ -36,6 +38,14 @@ public class DataController : ControllerBase
     {
         var container = _cosmosClient.GetContainer(_databaseId, _table2ContainerId);
         var records = await liveSiteRepository.GetAllRecordsAsync(container);
+        return Ok(records);
+    }
+
+    [HttpGet("incidents/counts")]
+    public async Task<IActionResult> GetIncidentsData()
+    {
+        var container = _cosmosClient.GetContainer(_databaseId, _incidentsContainerId);
+        var records = await liveSiteRepository.GetAllIncidentsRecordsAsync(container);
         return Ok(records);
     }
 }

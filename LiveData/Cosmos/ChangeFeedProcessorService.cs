@@ -3,6 +3,7 @@ using LiveData.Models;
 using LiveData.Repository;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Azure.Cosmos.Serialization.HybridRow.RecordIO;
 using static DataController;
 
 namespace LiveData.Cosmos
@@ -15,8 +16,10 @@ namespace LiveData.Cosmos
         private readonly string _databaseId = "MyDatabase";
         private readonly string _table1ContainerId = "Table1Container";
         private readonly string _table2ContainerId = "Table2Container";
+        private readonly string _incidentsContainerId = "Incidents";
         private Container _table1Container;
         private Container _table2Container;
+        private Container _incidentsContainer;
 
         public ChangeFeedProcessorService(CosmosClient cosmosClient, IHubContext<DataHub> hubContext, ILiveSiteRepository liveSiteRepository)
         {
@@ -25,6 +28,7 @@ namespace LiveData.Cosmos
             this.liveSiteRepository = liveSiteRepository;
             _table1Container = _cosmosClient.GetContainer(_databaseId, _table1ContainerId);
             _table2Container = _cosmosClient.GetContainer(_databaseId, _table2ContainerId);
+            _incidentsContainer = _cosmosClient.GetContainer(_databaseId, _incidentsContainerId);
         }
 
         public async Task StartChangeFeedProcessorAsync()
@@ -45,8 +49,17 @@ namespace LiveData.Cosmos
                 .WithLeaseContainer(leaseContainer)
                 .Build();
 
+            // Change feed processor for incidents
+            ChangeFeedProcessor incidentsProcessor = _incidentsContainer
+                .GetChangeFeedProcessorBuilder<dynamic>("incidentsProcessor", ProcessIncidentChangesAsync)
+                .WithInstanceName("incidentsProcessor")
+                .WithLeaseContainer(leaseContainer)
+                .Build();
+
             await table1Processor.StartAsync();
             await table2Processor.StartAsync();
+            await incidentsProcessor.StartAsync();
+
         }
 
         private async Task ProcessTable1ChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
@@ -59,6 +72,15 @@ namespace LiveData.Cosmos
         {
             var allTable2Records = await liveSiteRepository.GetAllRecordsAsync(_table2Container);
             await _hubContext.Clients.All.SendAsync("ReceiveTable2Update", allTable2Records);
+        }
+
+        private async Task ProcessIncidentChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
+        {
+            // Fetch all records from the incidents container when any change is detected
+            var allIncidents = await liveSiteRepository.GetAllIncidentsRecordsAsync(_incidentsContainer);
+
+            // Send the updated incidents to all connected clients
+            await _hubContext.Clients.All.SendAsync("ReceiveIncidentUpdate", allIncidents);
         }
     }
 }

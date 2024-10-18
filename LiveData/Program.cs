@@ -1,5 +1,6 @@
 using LiveData.Cosmos;
 using LiveData.Hubs;
+using LiveData.Repository;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 
@@ -26,6 +27,7 @@ builder.Services.AddSingleton<CosmosClient>(new CosmosClient(
     cosmosDbSettings["PrimaryKey"]));
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<ChangeFeedProcessorService>();
+builder.Services.AddTransient<ILiveSiteRepository, LiveSiteRepository>();
 
 
 var app = builder.Build();

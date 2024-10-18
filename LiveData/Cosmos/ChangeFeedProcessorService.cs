@@ -1,4 +1,6 @@
 ﻿using LiveData.Hubs;
+using LiveData.Models;
+using LiveData.Repository;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Azure.Cosmos;
 using static DataController;
@@ -9,16 +11,18 @@ namespace LiveData.Cosmos
     {
         private readonly CosmosClient _cosmosClient;
         private readonly IHubContext<DataHub> _hubContext;
+        private readonly ILiveSiteRepository liveSiteRepository;
         private readonly string _databaseId = "MyDatabase";
         private readonly string _table1ContainerId = "Table1Container";
         private readonly string _table2ContainerId = "Table2Container";
         private Container _table1Container;
         private Container _table2Container;
 
-        public ChangeFeedProcessorService(CosmosClient cosmosClient, IHubContext<DataHub> hubContext)
+        public ChangeFeedProcessorService(CosmosClient cosmosClient, IHubContext<DataHub> hubContext, ILiveSiteRepository liveSiteRepository)
         {
             _cosmosClient = cosmosClient;
             _hubContext = hubContext;
+            this.liveSiteRepository = liveSiteRepository;
             _table1Container = _cosmosClient.GetContainer(_databaseId, _table1ContainerId);
             _table2Container = _cosmosClient.GetContainer(_databaseId, _table2ContainerId);
         }
@@ -47,28 +51,14 @@ namespace LiveData.Cosmos
 
         private async Task ProcessTable1ChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
         {
-            var allTable1Records = await GetAllRecordsAsync(_table1Container);
+            var allTable1Records = await liveSiteRepository.GetAllRecordsAsync(_table1Container);
             await _hubContext.Clients.All.SendAsync("ReceiveTable1Update", allTable1Records);
         }
 
         private async Task ProcessTable2ChangesAsync(IReadOnlyCollection<dynamic> changes, CancellationToken cancellationToken)
         {
-            var allTable2Records = await GetAllRecordsAsync(_table2Container);
+            var allTable2Records = await liveSiteRepository.GetAllRecordsAsync(_table2Container);
             await _hubContext.Clients.All.SendAsync("ReceiveTable2Update", allTable2Records);
-        }
-
-        private static async Task<List<Record>> GetAllRecordsAsync(Container container)
-        {
-            var records = new List<Record>();
-            var iterator = container.GetItemQueryIterator<Record>("SELECT * FROM c");
-
-            while (iterator.HasMoreResults)
-            {
-                var response = await iterator.ReadNextAsync();
-                records.AddRange(response);
-            }
-
-            return records;
         }
     }
 }
